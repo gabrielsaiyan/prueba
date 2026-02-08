@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Adivina el número</title>
+  <style>
+    :root{ --card: rgba(0,0,0,.55); --stroke: rgba(255,255,255,.18); }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:#fff;
+      background:
+        linear-gradient(0deg, rgba(0,0,0,.55), rgba(0,0,0,.55)),
+        url("foto.jpg") center/cover no-repeat fixed;
+    }
+    .wrap{ width:min(900px, 92vw); display:grid; gap:14px; grid-template-columns: 1.2fr .8fr; }
+    @media (max-width: 760px){ .wrap{ grid-template-columns: 1fr; } }
+    .card{ background: var(--card); border:1px solid var(--stroke); border-radius:16px; padding:18px; backdrop-filter: blur(6px); box-shadow: 0 14px 40px rgba(0,0,0,.35); }
+    h1{ margin:0 0 6px; font-size:20px; }
+    .sub{ opacity:.9; margin:0 0 14px; font-size:14px; }
+    .row{ display:flex; gap:10px; }
+    input, button, select{
+      width:100%; padding:12px; border-radius:12px; border:1px solid var(--stroke);
+      background: rgba(255,255,255,.08); color:#fff; outline:none; font-size:15px;
+    }
+    button{ cursor:pointer; background: rgba(255,255,255,.12); transition:.15s transform, .15s background; font-weight:700; }
+    button:hover{ background: rgba(255,255,255,.18); transform: translateY(-1px); }
+    button:disabled{ opacity:.5; cursor:not-allowed; transform:none; }
+    .meta{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; font-size:13px; }
+    .pill{ border:1px solid var(--stroke); background: rgba(0,0,0,.25); border-radius:999px; padding:6px 10px; }
+    .feedback{
+      margin-top:12px; padding:12px; border-radius:12px; border:1px solid var(--stroke);
+      background: rgba(0,0,0,.25); min-height:48px; display:flex; align-items:center; justify-content:space-between; gap:10px;
+    }
+    .small{ font-size:12px; opacity:.8; }
+    table{ width:100%; border-collapse:collapse; font-size:13px; }
+    th, td{ padding:10px 8px; border-bottom:1px solid rgba(255,255,255,.12); text-align:left; }
+    th{ opacity:.85; font-weight:700; }
+    .controls{ display:flex; gap:10px; margin-top:10px; }
+    .danger{ background: rgba(255,70,70,.18); }
+    .ok{ background: rgba(70,255,160,.14); }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <section class="card">
+      <h1>🎯 Adivina el número (1–100)</h1>
+      <p class="sub">Pulsa Enter para probar. Si aciertas, sale la foto premio.</p>
+
+      <div class="row">
+        <input id="guessInput" type="number" min="1" max="100" placeholder="Escribe un número (1-100)" />
+        <button id="btnTry">Probar</button>
+      </div>
+
+      <div class="meta">
+        <div class="pill">Intentos: <b id="attempts">0</b>/<b id="maxAttempts">10</b></div>
+        <div class="pill">Estado: <b id="status">Jugando</b></div>
+      </div>
+
+      <div id="feedbackBox" class="feedback">
+        <strong id="feedback">Listo. Empieza 🔥</strong>
+        <span class="small" id="extra"></span>
+      </div>
+
+      <div class="controls">
+        <button id="btnReset">Reiniciar</button>
+        <button id="btnReveal" class="danger">Revelar número</button>
+      </div>
+    </section>
+
+    <aside class="card">
+      <h1>🏆 Ranking</h1>
+      <p class="sub">Se guarda en tu navegador.</p>
+
+      <div class="row" style="margin-bottom:10px;">
+        <input id="playerName" type="text" maxlength="16" placeholder="Tu nombre" />
+        <select id="attemptLimit">
+          <option value="6">6 intentos</option>
+          <option value="8">8 intentos</option>
+          <option value="10" selected>10 intentos</option>
+          <option value="12">12 intentos</option>
+        </select>
+      </div>
+
+      <table>
+        <thead><tr><th>#</th><th>Nombre</th><th>Intentos</th><th>Tiempo</th></tr></thead>
+        <tbody id="rankingBody"></tbody>
+      </table>
+
+      <div class="controls">
+        <button id="btnClear">Borrar ranking</button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- MODAL PREMIO -->
+  <div id="prizeModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); align-items:center; justify-content:center; z-index:999;">
+    <img src="premio.jpg" style="max-width:90%; max-height:90%; border-radius:16px; box-shadow:0 0 40px rgba(0,0,0,.8);">
+  </div>
+
+<script>
+  const LS_KEY = "ranking_adivina_numero_v1";
+  let secretNumber = 0, attempts = 0, maxAttempts = 10, startTime = 0, gameOver = false;
+
+  const $ = (id) => document.getElementById(id);
+  const guessInput = $("guessInput"), btnTry = $("btnTry"), btnReset = $("btnReset"), btnReveal = $("btnReveal");
+  const attemptsEl = $("attempts"), maxAttemptsEl = $("maxAttempts"), feedbackEl = $("feedback"), extraEl = $("extra");
+  const statusEl = $("status"), playerNameEl = $("playerName"), attemptLimitEl = $("attemptLimit");
+  const rankingBody = $("rankingBody"), btnClear = $("btnClear"), feedbackBox = $("feedbackBox"), prizeModal = $("prizeModal");
+
+  function nowMs(){ return Date.now(); }
+  function rand1to100(){ return Math.floor(Math.random()*100)+1; }
+
+  function setFeedback(text, extra="", type=""){
+    feedbackEl.textContent = text; extraEl.textContent = extra;
+    feedbackBox.classList.remove("ok","danger");
+    if(type) feedbackBox.classList.add(type);
+  }
+  function setUI(){
+    attemptsEl.textContent = attempts;
+    maxAttemptsEl.textContent = maxAttempts;
+    btnTry.disabled = gameOver;
+    guessInput.disabled = gameOver;
+    statusEl.textContent = gameOver ? "Final" : "Jugando";
+  }
+
+  function resetGame(){
+    secretNumber = rand1to100();
+    attempts = 0; gameOver = false; startTime = nowMs();
+    guessInput.value = ""; guessInput.focus();
+    prizeModal.style.display = "none";
+    setFeedback("Listo. Lanza un número ⚡");
+    setUI();
+  }
+
+  function loadRanking(){
+    try { return JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch { return []; }
+  }
+  function saveRanking(list){ localStorage.setItem(LS_KEY, JSON.stringify(list)); }
+  function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c])); }
+
+  function renderRanking(){
+    const list = loadRanking();
+    rankingBody.innerHTML = "";
+    if(!list.length){ rankingBody.innerHTML = `<tr><td colspan="4" style="opacity:.8;">Sin registros.</td></tr>`; return; }
+    list.forEach((r,i)=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${i+1}</td><td>${escapeHtml(r.name)}</td><td>${r.attempts}</td><td>${r.timeSec}s</td>`;
+      rankingBody.appendChild(tr);
+    });
+  }
+
+  function saveScore(timeSec){
+    const name = (playerNameEl.value || "Anónimo").trim().slice(0,16);
+    const list = loadRanking();
+    list.push({ name, attempts, timeSec, date: new Date().toISOString() });
+    list.sort((a,b)=>(a.attempts-b.attempts)||(a.timeSec-b.timeSec));
+    saveRanking(list.slice(0,10));
+    renderRanking();
+  }
+
+  function endGameWin(){
+    gameOver = true;
+    const timeSec = Math.round((nowMs()-startTime)/1000);
+    setFeedback("✅ Correcto. Premio desbloqueado. 🦋", `Tiempo: ${timeSec}s`, "ok");
+    setUI();
+    prizeModal.style.display = "flex";   // <-- AQUÍ SALE LA FOTO
+    saveScore(timeSec);
+  }
+
+  function endGameLose(){
+    gameOver = true;
+    setFeedback(`❌ Sin intentos. Era ${secretNumber}.`, "Reinicia para otra.", "danger");
+    setUI();
+  }
+
+  function checkGuess(){
+    if(gameOver) return;
+    const val = Number(guessInput.value);
+    if(!Number.isFinite(val)){ setFeedback("Mete un número primero 👀"); return; }
+    attempts++;
+    setUI();
+    if(val > secretNumber) setFeedback("Demasiado alto", `Te quedan ${maxAttempts-attempts} intentos`);
+    else if(val < secretNumber) setFeedback("Demasiado bajo", `Te quedan ${maxAttempts-attempts} intentos`);
+    else { endGameWin(); return; }
+    if(attempts >= maxAttempts) endGameLose();
+  }
+
+  btnTry.addEventListener("click", checkGuess);
+  guessInput.addEventListener("keydown", (e)=>{ if(e.key==="Enter") checkGuess(); });
+  btnReset.addEventListener("click", resetGame);
+  btnReveal.addEventListener("click", ()=> alert(`Número: ${secretNumber}`));
+  attemptLimitEl.addEventListener("change", ()=>{ maxAttempts = Number(attemptLimitEl.value); resetGame(); });
+  btnClear.addEventListener("click", ()=>{ localStorage.removeItem(LS_KEY); renderRanking(); });
+
+  // Cerrar premio al hacer clic
+  prizeModal.addEventListener("click", ()=> prizeModal.style.display = "none");
+
+  renderRanking();
+  maxAttempts = Number(attemptLimitEl.value);
+  resetGame();
+</script>
+</body>
+</html>
